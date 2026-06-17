@@ -26,3 +26,5 @@ def image_to_ascii(
     color: bool = False
 ) -> str:
     
+
+    
