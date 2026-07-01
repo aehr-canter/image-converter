@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>uniart — image to character art</title>
+<style>
+  :root{
+    --bg:#0b0f0c; --panel:#11160f; --border:#233024; --text:#d8e6d8;
+    --muted:#7c9481; --accent:#39d67a; --accent-dim:#1f7a45;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0; padding:32px 16px 64px; background:var(--bg); color:var(--text);
+    font-family:'JetBrains Mono','Courier New',monospace;
+  }
+  .wrap{max-width:900px;margin:0 auto;}
+  h1{font-size:20px;font-weight:500;letter-spacing:0.5px;margin:0 0 4px;color:var(--accent);}
+  .sub{color:var(--muted);font-size:13px;margin:0 0 28px;}
+  .panel{background:var(--panel);border:1px solid var(--border);border-radius:6px;padding:18px;margin-bottom:16px;}
+  .row{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-bottom:12px;}
+  .row:last-child{margin-bottom:0;}
+  button{
+    background:transparent;border:1px solid var(--border-2,var(--border));color:var(--text);
+    font-family:inherit;font-size:12px;padding:7px 14px;border-radius:4px;cursor:pointer;
+  }
+  button:hover{border-color:var(--accent-dim);color:var(--accent);}
+  button.active{background:var(--accent-dim);border-color:var(--accent);color:#eafff0;}
+  input[type=file]{display:none;}
+  label{font-size:12px;color:var(--muted);display:flex;align-items:center;gap:6px;}
+  input[type=range]{accent-color:var(--accent);}
+  input[type=checkbox]{accent-color:var(--accent);}
+  #output-panel{overflow-x:auto;background:#080c09;border:1px solid var(--border);border-radius:6px;padding:16px;}
+  #output{margin:0;font-size:10px;line-height:1;white-space:pre;font-family:'JetBrains Mono','Courier New',monospace;}
+  .footer{display:flex;justify-content:flex-end;margin-top:14px;}
+  .hint{color:var(--muted);font-size:11px;margin-top:10px;}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>uniart</h1>
+  <p class="sub">Drop in an image, convert it to ASCII, half-block, or braille character art.</p>
+
+  <div class="panel">
+    <div class="row">
+      <button id="upload-btn">Upload image</button>
+      <input type="file" id="file-input" accept="image/*">
+      <button class="active" data-mode="ascii" id="mode-ascii">ASCII</button>
+      <button data-mode="halfblock" id="mode-halfblock">Half-block</button>
+      <button data-mode="braille" id="mode-braille">Braille</button>
+    </div>
+    <div class="row">
+      <label>Width
+        <input type="range" id="width" min="40" max="200" step="2" value="100" style="width:140px;">
+        <span id="width-out">100</span>
+      </label>
+      <label><input type="checkbox" id="invert"> Invert</label>
+      <label id="color-label"><input type="checkbox" id="color" checked> Color</label>
+    </div>
+  </div>
+
+  <div id="output-panel"><pre id="output"></pre></div>
+
+  <div class="footer">
+    <button id="download-btn">Download .txt</button>
+  </div>
+  <p class="hint">Everything runs locally in your browser — no image is uploaded anywhere.</p>
+</div>
+
+<script>
+(function(){
+  var state = { img: null, mode: 'ascii', width: 100, invert: false, color: true };
+  var canvas = document.createElement('canvas');
+  var ctx = canvas.getContext('2d');
+  var output = document.getElementById('output');
+  var ramp = " .:-=+*#%@";
+
+  function luminance(r,g,b){ return 0.2126*r+0.7152*g+0.0722*b; }
+
+  function sampleGrid(cols, rows){
+    canvas.width = cols; canvas.height = rows;
+    ctx.clearRect(0,0,cols,rows);
+    ctx.drawImage(state.img, 0, 0, cols, rows);
+    return ctx.getImageData(0,0,cols,rows).data;
+  }
+
+  function renderAscii(){
+    var cols = state.width;
+    var rows = Math.max(1, Math.round(cols * (state.img.height/state.img.width) * 0.55));
+    var data = sampleGrid(cols, rows);
+    var html = '';
+    for(var y=0;y<rows;y++){
+      for(var x=0;x<cols;x++){
+        var i = (y*cols+x)*4;
+        var r=data[i], g=data[i+1], b=data[i+2];
+        var l = luminance(r,g,b)/255;
+        if(state.invert) l = 1-l;
+        var idx = Math.min(ramp.length-1, Math.floor(l*ramp.length));
+        var ch = ramp[ramp.length-1-idx];
+        if(ch===' ') ch='&nbsp;';
+        if(state.color){
+          html += '<span style="color:rgb('+r+','+g+','+b+')">'+ch+'</span>';
+        } else {
+          html += ch;
+        }
+      }
+      html += '\n';
+    }
+    output.innerHTML = html;
+  }
+
+  function renderHalfblock(){
+    var cols = state.width;
+    var charRows = Math.max(1, Math.round(cols * (state.img.height/state.img.width) * 0.55));
+    var pixRows = charRows*2;
+    var data = sampleGrid(cols, pixRows);
+    function px(x,y){ var i=(y*cols+x)*4; return [data[i],data[i+1],data[i+2]]; }
+    var html='';
+    for(var cy=0;cy<charRows;cy++){
+      for(var x=0;x<cols;x++){
+        var top = px(x, cy*2);
+        var bot = px(x, cy*2+1);
+        if(state.invert){ var t=top; top=bot; bot=t; }
+        var fg, bg;
+        if(state.color){
+          fg = 'rgb('+top[0]+','+top[1]+','+top[2]+')';
+          bg = 'rgb('+bot[0]+','+bot[1]+','+bot[2]+')';
+        } else {
+          var lt = Math.round(luminance(top[0],top[1],top[2]));
+          var lb = Math.round(luminance(bot[0],bot[1],bot[2]));
+          fg='rgb('+lt+','+lt+','+lt+')';
+          bg='rgb('+lb+','+lb+','+lb+')';
+        }
+        html += '<span style="color:'+fg+';background:'+bg+'">\u2580</span>';
+      }
+      html+='\n';
+    }
+    output.innerHTML = html;
+  }
+
+  function renderBraille(){
+    var cols = state.width;
+    var charRows = Math.max(1, Math.round(cols * (state.img.height/state.img.width) * 0.55));
+    var w = cols*2, h = charRows*4;
+    var data = sampleGrid(w, h);
+    var gray = new Float32Array(w*h);
+    for(var i=0;i<w*h;i++){
+      var r=data[i*4], g=data[i*4+1], b=data[i*4+2];
+      var l = luminance(r,g,b)/255;
+      if(state.invert) l = 1-l;
+      gray[i] = l;
+    }
+    var bits = new Uint8Array(w*h);
+    for(var y=0;y<h;y++){
+      for(var x=0;x<w;x++){
+        var idx = y*w+x;
+        var oldVal = gray[idx];
+        var newVal = oldVal < 0.5 ? 0 : 1;
+        bits[idx] = newVal===0 ? 1 : 0;
+        var err = oldVal-newVal;
+        if(x+1<w) gray[idx+1]+=err*7/16;
+        if(y+1<h){
+          if(x>0) gray[idx-1+w]+=err*3/16;
+          gray[idx+w]+=err*5/16;
+          if(x+1<w) gray[idx+1+w]+=err*1/16;
+        }
+      }
+    }
+    var map=[[0,0,0x01],[0,1,0x02],[0,2,0x04],[1,0,0x08],[1,1,0x10],[1,2,0x20],[0,3,0x40],[1,3,0x80]];
+    var html='';
+    for(var cy=0;cy<charRows;cy++){
+      for(var cx=0;cx<cols;cx++){
+        var code=0;
+        for(var m=0;m<8;m++){
+          var dx=map[m][0], dy=map[m][1], bit=map[m][2];
+          var px=cx*2+dx, py=cy*4+dy;
+          if(bits[py*w+px]) code|=bit;
+        }
+        html += String.fromCharCode(0x2800+code);
+      }
+      html+='\n';
+    }
+    output.textContent = html;
+  }
+
+  function render(){
+    if(!state.img) return;
+    var braille = state.mode==='braille';
+    document.getElementById('color').disabled = braille;
+    document.getElementById('color-label').style.opacity = braille ? '0.4' : '1';
+    if(state.mode==='ascii') renderAscii();
+    else if(state.mode==='halfblock') renderHalfblock();
+    else renderBraille();
+  }
+
+  document.getElementById('upload-btn').addEventListener('click', function(){
+    document.getElementById('file-input').click();
+  });
+  document.getElementById('file-input').addEventListener('change', function(e){
+    var file = e.target.files[0];
+    if(!file) return;
+    var reader = new FileReader();
+    reader.onload = function(ev){
+      var img = new Image();
+      img.onload = function(){ state.img = img; render(); };
+      img.src = ev.target.result;
+    };
+    reader.readAsDataURL(file);
+  });
+
+  ['ascii','halfblock','braille'].forEach(function(m){
+    document.getElementById('mode-'+m).addEventListener('click', function(){
+      state.mode = m;
+      ['ascii','halfblock','braille'].forEach(function(mm){
+        document.getElementById('mode-'+mm).classList.toggle('active', mm===m);
+      });
+      render();
+    });
+  });
+
+  var widthSlider = document.getElementById('width');
+  widthSlider.addEventListener('input', function(){
+    state.width = parseInt(widthSlider.value,10);
+    document.getElementById('width-out').textContent = state.width;
+    render();
+  });
+  document.getElementById('invert').addEventListener('change', function(e){ state.invert = e.target.checked; render(); });
+  document.getElementById('color').addEventListener('change', function(e){ state.color = e.target.checked; render(); });
+
+  document.getElementById('download-btn').addEventListener('click', function(){
+    if(!state.img) return;
+    var text = output.textContent;
+    var blob = new Blob([text], {type:'text/plain'});
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement('a');
+    a.href = url; a.download = 'uniart-'+state.mode+'.txt';
+    a.click();
+    URL.revokeObjectURL(url);
+  });
+
+  function makeDefaultImage(){
+    var c = document.createElement('canvas');
+    c.width = 200; c.height = 200;
+    var cx = c.getContext('2d');
+    cx.fillStyle = '#1a1a1a'; cx.fillRect(0,0,200,200);
+    cx.fillStyle = '#e8e8e8'; cx.beginPath(); cx.arc(100,90,55,0,Math.PI*2); cx.fill();
+    cx.fillStyle = '#808080'; cx.fillRect(40,150,120,30);
+    cx.fillStyle = '#404040';
+    cx.beginPath(); cx.arc(70,80,12,0,Math.PI*2); cx.fill();
+    cx.beginPath(); cx.arc(130,80,12,0,Math.PI*2); cx.fill();
+    cx.strokeStyle = '#c0c0c0'; cx.lineWidth = 4;
+    cx.beginPath(); cx.arc(100,105,25,0.15*Math.PI,0.85*Math.PI); cx.stroke();
+    var img = new Image();
+    img.onload = function(){ state.img = img; render(); };
+    img.src = c.toDataURL();
+  }
+  makeDefaultImage();
+})();
+</script>
+</body>
+</html>
